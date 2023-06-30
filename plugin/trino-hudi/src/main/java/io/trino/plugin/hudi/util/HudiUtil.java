@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.hudi;
+package io.trino.plugin.hudi.util;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -23,7 +23,10 @@ import io.trino.plugin.hive.HivePartition;
 import io.trino.plugin.hive.HivePartitionKey;
 import io.trino.plugin.hive.HivePartitionManager;
 import io.trino.plugin.hive.metastore.Column;
+import io.trino.plugin.hudi.HudiSplit;
+import io.trino.plugin.hudi.files.HudiFile;
 import io.trino.plugin.hudi.model.HudiFileFormat;
+import io.trino.plugin.hudi.model.HudiTableType;
 import io.trino.plugin.hudi.table.HudiTableMetaClient;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ColumnHandle;
@@ -42,6 +45,9 @@ import static io.trino.plugin.hive.util.HiveUtil.checkCondition;
 import static io.trino.plugin.hive.util.HiveUtil.parsePartitionValue;
 import static io.trino.plugin.hudi.HudiErrorCode.HUDI_FILESYSTEM_ERROR;
 import static io.trino.plugin.hudi.HudiErrorCode.HUDI_UNSUPPORTED_FILE_FORMAT;
+import static io.trino.plugin.hudi.HudiErrorCode.HUDI_UNSUPPORTED_TABLE_TYPE;
+import static io.trino.plugin.hudi.model.HudiTableType.COPY_ON_WRITE;
+import static io.trino.plugin.hudi.model.HudiTableType.MERGE_ON_READ;
 import static io.trino.plugin.hudi.table.HudiTableMetaClient.METAFOLDER_NAME;
 import static java.util.stream.Collectors.toList;
 
@@ -174,5 +180,27 @@ public final class HudiUtil
                 .setTrinoFileSystem(fileSystem)
                 .setBasePath(Location.of(basePath))
                 .build();
+    }
+
+    public static HudiTableType getTableType(String inputFormatName)
+    {
+        return switch (inputFormatName) {
+            case "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
+                    "org.apache.hudi.hadoop.HoodieParquetInputFormat",
+                    "com.uber.hoodie.hadoop.HoodieInputFormat" -> COPY_ON_WRITE;
+            case "org.apache.hudi.hadoop.realtime.HoodieParquetRealtimeInputFormat",
+                    "com.uber.hoodie.hadoop.realtime.HoodieRealtimeInputFormat" -> MERGE_ON_READ;
+            default -> throw new TrinoException(HUDI_UNSUPPORTED_TABLE_TYPE, "Unknown table type for input format: " + inputFormatName);
+        };
+    }
+
+    public static HudiFile getHudiBaseFile(HudiSplit hudiSplit)
+    {
+        if (hudiSplit.getBaseFile().isPresent()) {
+            return hudiSplit.getBaseFile().get();
+        }
+        else {
+            return hudiSplit.getLogFiles().get(0);
+        }
     }
 }

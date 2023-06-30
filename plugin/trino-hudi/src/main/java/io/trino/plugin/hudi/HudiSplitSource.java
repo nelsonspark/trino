@@ -31,11 +31,13 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorSplitSource;
+import io.trino.spi.type.TypeManager;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
@@ -43,7 +45,7 @@ import static io.airlift.concurrent.MoreFutures.toCompletableFuture;
 import static io.trino.plugin.hudi.HudiSessionProperties.getMinimumAssignedSplitWeight;
 import static io.trino.plugin.hudi.HudiSessionProperties.getStandardSplitWeightSize;
 import static io.trino.plugin.hudi.HudiSessionProperties.isSizeBasedSplitWeightsEnabled;
-import static io.trino.plugin.hudi.HudiUtil.buildTableMetaClient;
+import static io.trino.plugin.hudi.util.HudiUtil.buildTableMetaClient;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static java.util.stream.Collectors.toList;
 
@@ -59,21 +61,21 @@ public class HudiSplitSource
             Table table,
             HudiTableHandle tableHandle,
             TrinoFileSystemFactory fileSystemFactory,
-            Map<String, HiveColumnHandle> partitionColumnHandleMap,
             ExecutorService executor,
+            ScheduledExecutorService splitLoaderExecutorService,
+            ExecutorService splitGeneratorExecutorService,
             int maxSplitsPerSecond,
-            int maxOutstandingSplits)
+            int maxOutstandingSplits,
+            TypeManager typeManager)
     {
         HudiTableMetaClient metaClient = buildTableMetaClient(fileSystemFactory.create(session), tableHandle.getBasePath());
-        List<HiveColumnHandle> partitionColumnHandles = table.getPartitionColumns().stream()
-                .map(column -> partitionColumnHandleMap.get(column.getName())).collect(toList());
 
         HudiDirectoryLister hudiDirectoryLister = new HudiReadOptimizedDirectoryLister(
                 tableHandle,
-                metaClient,
+                null,
                 metastore,
                 table,
-                partitionColumnHandles);
+                typeManager);
 
         this.queue = new ThrottledAsyncQueue<>(maxSplitsPerSecond, maxOutstandingSplits, executor);
         HudiBackgroundSplitLoader splitLoader = new HudiBackgroundSplitLoader(

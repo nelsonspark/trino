@@ -15,14 +15,18 @@ package io.trino.plugin.hudi.files;
 
 import io.trino.filesystem.FileEntry;
 import io.trino.filesystem.Location;
+import io.trino.plugin.hudi.HudiFileStatus;
 
 import java.util.Objects;
+import java.util.Optional;
 
-import static io.trino.plugin.hudi.files.FSUtils.isLogFile;
+import static io.trino.plugin.hudi.util.FSUtils.isLogFile;
 import static java.util.Objects.requireNonNull;
 
 public class HudiBaseFile
 {
+    private Optional<HudiBaseFile> bootstrapBaseFile;
+
     private transient FileEntry fileEntry;
     private final String fullPath;
     private final String fileName;
@@ -34,6 +38,22 @@ public class HudiBaseFile
                 fileEntry.location().path(),
                 fileEntry.location().fileName(),
                 fileEntry.length());
+    }
+
+    public HudiBaseFile(HudiFileStatus fileStatus)
+    {
+        this(null,
+                fileStatus.location().path(),
+                fileStatus.location().fileName(),
+                fileStatus.length());
+    }
+
+    public HudiBaseFile(HudiBaseFile dataFile)
+    {
+        this.fileEntry = dataFile.fileEntry;
+        this.fullPath = dataFile.fullPath;
+        this.fileName = dataFile.fileName;
+        this.fileLen = dataFile.fileLen;
     }
 
     private HudiBaseFile(FileEntry fileEntry, String fullPath, String fileName, long fileLen)
@@ -80,6 +100,11 @@ public class HudiBaseFile
             return fileName.split("_")[1].split("\\.")[0];
         }
         return fileName.split("_")[2].split("\\.")[0];
+    }
+
+    public void setBootstrapBaseFile(HudiBaseFile bootstrapBaseFile)
+    {
+        this.bootstrapBaseFile = Optional.ofNullable(bootstrapBaseFile);
     }
 
     @Override

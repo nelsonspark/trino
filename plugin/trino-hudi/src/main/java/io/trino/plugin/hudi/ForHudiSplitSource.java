@@ -11,22 +11,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.hudi.partition;
 
-import io.trino.plugin.hive.HivePartitionKey;
-import io.trino.plugin.hive.metastore.Partition;
-import io.trino.plugin.hive.metastore.Table;
+package io.trino.plugin.hudi;
 
-import java.util.List;
-import java.util.Optional;
+import com.google.inject.BindingAnnotation;
 
-public interface HudiPartitionInfo
+import java.lang.annotation.Retention;
+import java.lang.annotation.Target;
+
+import static java.lang.annotation.ElementType.FIELD;
+import static java.lang.annotation.ElementType.METHOD;
+import static java.lang.annotation.ElementType.PARAMETER;
+import static java.lang.annotation.RetentionPolicy.RUNTIME;
+
+@Retention(RUNTIME)
+@Target({FIELD, PARAMETER, METHOD})
+@BindingAnnotation
+public @interface ForHudiSplitSource
 {
-    Table getTable();
-
-    String getRelativePartitionPath();
-
-    String getHivePartitionName();
-
-    List<HivePartitionKey> getHivePartitionKeys();
 }

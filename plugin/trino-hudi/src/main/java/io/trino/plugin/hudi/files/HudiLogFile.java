@@ -19,10 +19,10 @@ import io.trino.filesystem.Location;
 import java.util.Comparator;
 import java.util.Objects;
 
-import static io.trino.plugin.hudi.files.FSUtils.getBaseCommitTimeFromLogPath;
-import static io.trino.plugin.hudi.files.FSUtils.getFileIdFromLogPath;
-import static io.trino.plugin.hudi.files.FSUtils.getFileVersionFromLog;
-import static io.trino.plugin.hudi.files.FSUtils.getWriteTokenFromLogPath;
+import static io.trino.plugin.hudi.util.FSUtils.getBaseCommitTimeFromLogPath;
+import static io.trino.plugin.hudi.util.FSUtils.getFileIdFromLogPath;
+import static io.trino.plugin.hudi.util.FSUtils.getFileVersionFromLog;
+import static io.trino.plugin.hudi.util.FSUtils.getWriteTokenFromLogPath;
 
 public class HudiLogFile
 {
@@ -35,6 +35,12 @@ public class HudiLogFile
     {
         this.pathStr = fileStatus.location().toString();
         this.fileLen = fileStatus.length();
+    }
+
+    public HudiLogFile(HudiLogFile logFile)
+    {
+        this.pathStr = logFile.pathStr;
+        this.fileLen = logFile.fileLen;
     }
 
     public String getFileId()

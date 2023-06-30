@@ -22,6 +22,7 @@ import java.util.TreeMap;
 import java.util.stream.Stream;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
+import static io.trino.plugin.hudi.timeline.HudiTimeline.LESSER_THAN;
 import static io.trino.plugin.hudi.timeline.HudiTimeline.LESSER_THAN_OR_EQUALS;
 import static io.trino.plugin.hudi.timeline.HudiTimeline.compareTimestamps;
 import static java.util.Objects.requireNonNull;
@@ -46,6 +47,14 @@ public class HudiFileGroup
         this(new HudiFileGroupId(partitionPath, id), timeline);
     }
 
+    public HudiFileGroup(HudiFileGroup fileGroup)
+    {
+        this.timeline = fileGroup.timeline;
+        this.fileGroupId = fileGroup.fileGroupId;
+        this.fileSlices = new TreeMap<>(fileGroup.fileSlices);
+        this.lastInstant = fileGroup.lastInstant;
+    }
+
     public HudiFileGroup(HudiFileGroupId fileGroupId, HudiTimeline timeline)
     {
         this.fileGroupId = requireNonNull(fileGroupId, "fileGroupId is null");
@@ -57,14 +66,14 @@ public class HudiFileGroup
     public void addNewFileSliceAtInstant(String baseInstantTime)
     {
         if (!fileSlices.containsKey(baseInstantTime)) {
-            fileSlices.put(baseInstantTime, new FileSlice(baseInstantTime));
+            fileSlices.put(baseInstantTime, new FileSlice(fileGroupId, baseInstantTime));
         }
     }
 
     public void addBaseFile(HudiBaseFile dataFile)
     {
         if (!fileSlices.containsKey(dataFile.getCommitTime())) {
-            fileSlices.put(dataFile.getCommitTime(), new FileSlice(dataFile.getCommitTime()));
+            fileSlices.put(dataFile.getCommitTime(), new FileSlice(fileGroupId, dataFile.getCommitTime()));
         }
         fileSlices.get(dataFile.getCommitTime()).setBaseFile(dataFile);
     }
@@ -72,7 +81,7 @@ public class HudiFileGroup
     public void addLogFile(HudiLogFile logFile)
     {
         if (!fileSlices.containsKey(logFile.getBaseCommitTime())) {
-            fileSlices.put(logFile.getBaseCommitTime(), new FileSlice(logFile.getBaseCommitTime()));
+            fileSlices.put(logFile.getBaseCommitTime(), new FileSlice(fileGroupId, logFile.getBaseCommitTime()));
         }
         fileSlices.get(logFile.getBaseCommitTime()).addLogFile(logFile);
     }
@@ -107,6 +116,22 @@ public class HudiFileGroup
     public Stream<HudiBaseFile> getAllBaseFiles()
     {
         return getAllFileSlices().filter(slice -> slice.getBaseFile().isPresent()).map(slice -> slice.getBaseFile().get());
+    }
+
+    public Optional<FileSlice> getLatestFileSliceBeforeOrOn(String maxInstantTime)
+    {
+        return getAllFileSlices().filter(slice -> compareTimestamps(slice.getBaseInstantTime(), LESSER_THAN_OR_EQUALS, maxInstantTime)).findFirst();
+    }
+
+    public Stream<FileSlice> getAllFileSlicesBeforeOn(String maxInstantTime) {
+        return fileSlices.values().stream().filter(slice -> compareTimestamps(slice.getBaseInstantTime(), LESSER_THAN_OR_EQUALS, maxInstantTime));
+    }
+
+    public Optional<FileSlice> getLatestFileSliceBefore(String maxInstantTime)
+    {
+        return getAllFileSlices().filter(
+                        slice -> compareTimestamps(slice.getBaseInstantTime(), LESSER_THAN, maxInstantTime))
+                .findFirst();
     }
 
     @Override

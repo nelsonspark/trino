@@ -23,6 +23,8 @@ import io.trino.filesystem.Location;
 import io.trino.plugin.hudi.compaction.CompactionOperation;
 import io.trino.plugin.hudi.compaction.HudiCompactionOperation;
 import io.trino.plugin.hudi.compaction.HudiCompactionPlan;
+import io.trino.plugin.hudi.files.BootstrapBaseFileMapping;
+import io.trino.plugin.hudi.files.FileSlice;
 import io.trino.plugin.hudi.files.HudiBaseFile;
 import io.trino.plugin.hudi.files.HudiFileGroup;
 import io.trino.plugin.hudi.files.HudiFileGroupId;
@@ -31,6 +33,7 @@ import io.trino.plugin.hudi.model.HudiFileFormat;
 import io.trino.plugin.hudi.model.HudiInstant;
 import io.trino.plugin.hudi.model.HudiReplaceCommitMetadata;
 import io.trino.plugin.hudi.timeline.HudiTimeline;
+import io.trino.plugin.hudi.util.Pair;
 import io.trino.spi.TrinoException;
 import org.apache.avro.file.DataFileReader;
 import org.apache.avro.file.FileReader;
@@ -51,14 +54,17 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static io.trino.plugin.hudi.HudiErrorCode.HUDI_BAD_DATA;
-import static io.trino.plugin.hudi.files.FSUtils.LOG_FILE_PATTERN;
-import static io.trino.plugin.hudi.files.FSUtils.getPartitionLocation;
+import static io.trino.plugin.hudi.timeline.HudiTimeline.GREATER_THAN_OR_EQUALS;
+import static io.trino.plugin.hudi.timeline.HudiTimeline.METADATA_BOOTSTRAP_INSTANT_TS;
+import static io.trino.plugin.hudi.util.FSUtils.LOG_FILE_PATTERN;
+import static io.trino.plugin.hudi.util.FSUtils.getPartitionLocation;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.groupingBy;
 
@@ -86,6 +92,8 @@ public class HudiTableFileSystemView
 
     private Map<HudiFileGroupId, HudiInstant> fgIdToReplaceInstants;
 
+    protected Map<HudiFileGroupId, BootstrapBaseFileMapping> fgIdToBootstrapBaseFile;
+
     public HudiTableFileSystemView(HudiTableMetaClient metaClient, HudiTimeline visibleActiveTimeline)
     {
         partitionToFileGroupsMap = new ConcurrentHashMap<>();
@@ -95,6 +103,20 @@ public class HudiTableFileSystemView
         resetPendingCompactionOperations(getAllPendingCompactionOperations(metaClient)
                 .values().stream()
                 .map(pair -> Map.entry(pair.getKey(), CompactionOperation.convertFromAvroRecordInstance(pair.getValue()))));
+        resetBootstrapBaseFileMapping(Stream.empty());
+    }
+
+    void resetBootstrapBaseFileMapping(Stream<BootstrapBaseFileMapping> bootstrapBaseFileStream)
+    {
+        // Build fileId to bootstrap Data File
+        this.fgIdToBootstrapBaseFile = createFileIdToBootstrapBaseFileMap(bootstrapBaseFileStream
+                .collect(Collectors.toMap(BootstrapBaseFileMapping::getFileGroupId, x -> x)));
+    }
+
+    protected Map<HudiFileGroupId, BootstrapBaseFileMapping> createFileIdToBootstrapBaseFileMap(
+            Map<HudiFileGroupId, BootstrapBaseFileMapping> fileGroupIdBootstrapBaseFileMap)
+    {
+        return fileGroupIdBootstrapBaseFileMap;
     }
 
     private static Map<HudiFileGroupId, Entry<String, HudiCompactionOperation>> getAllPendingCompactionOperations(
@@ -204,6 +226,20 @@ public class HudiTableFileSystemView
                 identity()));
     }
 
+    protected Optional<HudiInstant> getReplaceInstant(final HudiFileGroupId fileGroupId)
+    {
+        return Optional.ofNullable(fgIdToReplaceInstants.get(fileGroupId));
+    }
+
+    private boolean isFileGroupReplacedBeforeOrOn(HudiFileGroupId fileGroupId, String instant)
+    {
+        Optional<HudiInstant> hoodieInstantOption = getReplaceInstant(fileGroupId);
+        if (!hoodieInstantOption.isPresent()) {
+            return false;
+        }
+        return HudiTimeline.compareTimestamps(instant, GREATER_THAN_OR_EQUALS, hoodieInstantOption.get().getTimestamp());
+    }
+
     private void resetFileGroupsReplaced(HudiTimeline timeline)
     {
         // for each REPLACE instant, get map of (partitionPath -> deleteFileGroup)
@@ -241,6 +277,140 @@ public class HudiTableFileSystemView
         finally {
             readLock.unlock();
         }
+    }
+
+    protected FileSlice addBootstrapBaseFileIfPresent(FileSlice fileSlice)
+    {
+        if (fileSlice.getBaseInstantTime().equals(METADATA_BOOTSTRAP_INSTANT_TS)) {
+            FileSlice copy = new FileSlice(fileSlice);
+            copy.getBaseFile().ifPresent(dataFile -> {
+                Optional<BootstrapBaseFileMapping> edf = getBootstrapBaseFile(copy.getFileGroupId());
+                edf.ifPresent(e -> dataFile.setBootstrapBaseFile(e.getBootstrapBaseFile()));
+            });
+            return copy;
+        }
+        return fileSlice;
+    }
+
+    protected Optional<BootstrapBaseFileMapping> getBootstrapBaseFile(HudiFileGroupId fileGroupId)
+    {
+        return Optional.ofNullable(fgIdToBootstrapBaseFile.get(fileGroupId));
+    }
+
+    protected HudiBaseFile addBootstrapBaseFileIfPresent(HudiFileGroupId fileGroupId, HudiBaseFile baseFile)
+    {
+        if (baseFile.getCommitTime().equals(METADATA_BOOTSTRAP_INSTANT_TS)) {
+            HudiBaseFile copy = new HudiBaseFile(baseFile);
+            Optional<BootstrapBaseFileMapping> edf = getBootstrapBaseFile(fileGroupId);
+            edf.ifPresent(e -> copy.setBootstrapBaseFile(e.getBootstrapBaseFile()));
+            return copy;
+        }
+        return baseFile;
+    }
+
+    public final Stream<FileSlice> getLatestFileSlicesBeforeOrOn(String partitionStr, String maxCommitTime,
+                                                                 boolean includeFileSlicesInPendingCompaction) {
+        try {
+            readLock.lock();
+            String partitionPath = formatPartitionKey(partitionStr);
+            ensurePartitionLoadedCorrectly(partitionPath);
+            Stream<Stream<FileSlice>> allFileSliceStream = fetchAllStoredFileGroups(partitionPath)
+                    .filter(slice -> !isFileGroupReplacedBeforeOrOn(slice.getFileGroupId(), maxCommitTime))
+                    .map(fg -> fg.getAllFileSlicesBeforeOn(maxCommitTime));
+            if (includeFileSlicesInPendingCompaction) {
+                return allFileSliceStream.map(sliceStream -> sliceStream.flatMap(slice -> this.filterBaseFileAfterPendingCompaction(slice, false)))
+                        .map(sliceStream -> sliceStream.findFirst().filter(Optional::isPresent).map(Optional::get)
+                        .map(this::addBootstrapBaseFileIfPresent);
+            } else {
+                return allFileSliceStream
+                        .map(sliceStream ->
+                                sliceStream
+                                        .filter(slice -> !isPendingCompactionScheduledForFileId(slice.getFileGroupId()))
+                                        .filter(slice -> !slice.isEmpty())
+                                        .findFirst())
+                        .filter(Optional::isPresent).map(Optional::get).map(this::addBootstrapBaseFileIfPresent);
+            }
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    protected boolean isPendingCompactionScheduledForFileId(HudiFileGroupId fgId) {
+        return fgIdToPendingCompaction.containsKey(fgId);
+    }
+
+    protected boolean isFileSliceAfterPendingCompaction(FileSlice fileSlice) {
+        Optional<Entry<String, CompactionOperation>> compactionWithInstantTime =
+                getPendingCompactionOperationWithInstant(fileSlice.getFileGroupId());
+        return (compactionWithInstantTime.isPresent())
+                && fileSlice.getBaseInstantTime().equals(compactionWithInstantTime.get().getKey());
+    }
+
+    protected Stream<FileSlice> filterBaseFileAfterPendingCompaction(FileSlice fileSlice, boolean includeEmptyFileSlice) {
+        if (isFileSliceAfterPendingCompaction(fileSlice)) {
+            LOG.debug("File Slice (" + fileSlice + ") is in pending compaction");
+            // Base file is filtered out of the file-slice as the corresponding compaction
+            // instant not completed yet.
+            FileSlice transformed = new FileSlice(fileSlice.getPartitionPath(), fileSlice.getBaseInstantTime(), fileSlice.getFileId());
+            fileSlice.getLogFiles().forEach(transformed::addLogFile);
+            if (transformed.isEmpty() && !includeEmptyFileSlice) {
+                return Stream.of();
+            }
+            return Stream.of(transformed);
+        }
+        return Stream.of(fileSlice);
+    }
+
+    public final Stream<FileSlice> getLatestMergedFileSlicesBeforeOrOn(String partitionStr, String maxInstantTime)
+    {
+        try {
+            readLock.lock();
+            String partition = formatPartitionKey(partitionStr);
+            ensurePartitionLoadedCorrectly(partition);
+            return fetchAllStoredFileGroups(partition)
+                    .filter(fg -> !isFileGroupReplacedBeforeOrOn(fg.getFileGroupId(), maxInstantTime))
+                    .map(fileGroup -> {
+                        Optional<FileSlice> fileSlice = fileGroup.getLatestFileSliceBeforeOrOn(maxInstantTime);
+                        // if the file-group is under construction, pick the latest before compaction instant time.
+                        if (fileSlice.isPresent()) {
+                            fileSlice = Optional.of(fetchMergedFileSlice(fileGroup, fileSlice.get()));
+                        }
+                        return fileSlice;
+                    }).filter(Optional::isPresent).map(Optional::get).map(this::addBootstrapBaseFileIfPresent);
+        }
+        finally {
+            readLock.unlock();
+        }
+    }
+
+    private FileSlice fetchMergedFileSlice(HudiFileGroup fileGroup, FileSlice fileSlice)
+    {
+        // if the file-group is under construction, pick the latest before compaction instant time.
+        Optional<Entry<String, CompactionOperation>> compactionOpWithInstant =
+                getPendingCompactionOperationWithInstant(fileGroup.getFileGroupId());
+        if (compactionOpWithInstant.isPresent()) {
+            String compactionInstantTime = compactionOpWithInstant.get().getKey();
+            if (fileSlice.getBaseInstantTime().equals(compactionInstantTime)) {
+                Optional<FileSlice> prevFileSlice = fileGroup.getLatestFileSliceBefore(compactionInstantTime);
+                if (prevFileSlice.isPresent()) {
+                    return mergeCompactionPendingFileSlices(fileSlice, prevFileSlice.get());
+                }
+            }
+        }
+        return fileSlice;
+    }
+
+    private static FileSlice mergeCompactionPendingFileSlices(FileSlice lastSlice, FileSlice penultimateSlice)
+    {
+        FileSlice merged = new FileSlice(penultimateSlice.getPartitionPath(), penultimateSlice.getBaseInstantTime(),
+                penultimateSlice.getFileId());
+        if (penultimateSlice.getBaseFile().isPresent()) {
+            merged.setBaseFile(penultimateSlice.getBaseFile().get());
+        }
+        // Add Log files from penultimate and last slices
+        penultimateSlice.getLogFiles().forEach(merged::addLogFile);
+        lastSlice.getLogFiles().forEach(merged::addLogFile);
+        return merged;
     }
 
     private boolean isFileGroupReplaced(String partitionPath, String fileId)

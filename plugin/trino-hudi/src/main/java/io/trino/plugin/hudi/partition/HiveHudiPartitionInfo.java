@@ -21,6 +21,7 @@ import io.trino.plugin.hive.metastore.HiveMetastore;
 import io.trino.plugin.hive.metastore.Partition;
 import io.trino.plugin.hive.metastore.Table;
 import io.trino.plugin.hive.util.HiveUtil;
+import io.trino.plugin.hudi.query.HudiDirectoryLister;
 import io.trino.spi.TrinoException;
 import io.trino.spi.predicate.TupleDomain;
 
@@ -30,48 +31,46 @@ import java.util.Optional;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static io.trino.plugin.hudi.HudiErrorCode.HUDI_PARTITION_NOT_FOUND;
-import static io.trino.plugin.hudi.HudiUtil.buildPartitionKeys;
-import static io.trino.plugin.hudi.HudiUtil.partitionMatchesPredicates;
+import static io.trino.plugin.hudi.util.HudiUtil.buildPartitionKeys;
+import static io.trino.plugin.hudi.util.HudiUtil.partitionMatchesPredicates;
 import static java.lang.String.format;
 
 public class HiveHudiPartitionInfo
         implements HudiPartitionInfo
 {
-    private final Table table;
-    private final List<HiveColumnHandle> partitionColumnHandles;
-    private final TupleDomain<HiveColumnHandle> constraintSummary;
     private final String hivePartitionName;
     private final List<Column> partitionColumns;
-    private final HiveMetastore hiveMetastore;
     private String relativePartitionPath;
     private List<HivePartitionKey> hivePartitionKeys;
+
+    private final HudiDirectoryLister hudiDirectoryLister;
 
     public HiveHudiPartitionInfo(
             String hivePartitionName,
             List<Column> partitionColumns,
-            List<HiveColumnHandle> partitionColumnHandles,
-            TupleDomain<HiveColumnHandle> constraintSummary,
-            Table table,
-            HiveMetastore hiveMetastore)
+            HudiDirectoryLister hudiDirectoryLister)
     {
-        this.table = table;
-        this.partitionColumnHandles = partitionColumnHandles;
-        this.constraintSummary = constraintSummary;
         this.hivePartitionName = hivePartitionName;
         this.partitionColumns = partitionColumns;
         if (partitionColumns.isEmpty()) {
             this.relativePartitionPath = "";
             this.hivePartitionKeys = Collections.emptyList();
+        } else {
+            this.relativePartitionPath = hudiDirectoryLister.getRelativePartitionPath(hivePartitionName);
+            this.hivePartitionKeys = hudiDirectoryLister.getHivePartitionKeys(hivePartitionName);
         }
-        this.hiveMetastore = hiveMetastore;
+        this.hudiDirectoryLister = hudiDirectoryLister;
+    }
+
+    @Override
+    public Table getTable()
+    {
+        return null;
     }
 
     @Override
     public String getRelativePartitionPath()
     {
-        if (relativePartitionPath == null) {
-            loadPartitionInfo(hiveMetastore.getPartition(table, HiveUtil.toPartitionValues(hivePartitionName)));
-        }
         return relativePartitionPath;
     }
 
@@ -84,53 +83,7 @@ public class HiveHudiPartitionInfo
     @Override
     public List<HivePartitionKey> getHivePartitionKeys()
     {
-        if (hivePartitionKeys == null) {
-            loadPartitionInfo(hiveMetastore.getPartition(table, HiveUtil.toPartitionValues(hivePartitionName)));
-        }
         return hivePartitionKeys;
-    }
-
-    @Override
-    public boolean doesMatchPredicates()
-    {
-        return partitionMatchesPredicates(table.getSchemaTableName(), hivePartitionName, partitionColumnHandles, constraintSummary);
-    }
-
-    @Override
-    public String getComparingKey()
-    {
-        return hivePartitionName;
-    }
-
-    @Override
-    public void loadPartitionInfo(Optional<Partition> partition)
-    {
-        if (partition.isEmpty()) {
-            throw new TrinoException(HUDI_PARTITION_NOT_FOUND, format("Cannot find partition in Hive Metastore: %s", hivePartitionName));
-        }
-        this.relativePartitionPath = getRelativePartitionPath(
-                Location.of(table.getStorage().getLocation()),
-                Location.of(partition.get().getStorage().getLocation()));
-        this.hivePartitionKeys = buildPartitionKeys(partitionColumns, partition.get().getValues());
-    }
-
-    private static String getRelativePartitionPath(Location baseLocation, Location fullPartitionLocation)
-    {
-        String basePath = baseLocation.path();
-        String fullPartitionPath = fullPartitionLocation.path();
-
-        if (!fullPartitionPath.startsWith(basePath)) {
-            throw new IllegalArgumentException("Partition location does not belong to base-location");
-        }
-
-        String baseLocationParent = baseLocation.parentDirectory().path();
-        String baseLocationName = baseLocation.fileName();
-        int partitionStartIndex = fullPartitionPath.indexOf(
-                baseLocationName,
-                baseLocationParent == null ? 0 : baseLocationParent.length());
-        // Partition-Path could be empty for non-partitioned tables
-        boolean isNonPartitionedTable = partitionStartIndex + baseLocationName.length() == fullPartitionPath.length();
-        return isNonPartitionedTable ? "" : fullPartitionPath.substring(partitionStartIndex + baseLocationName.length() + 1);
     }
 
     @Override

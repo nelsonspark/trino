@@ -37,7 +37,7 @@ import java.util.stream.Stream;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.trino.plugin.hudi.HudiErrorCode.HUDI_UNSUPPORTED_TABLE_TYPE;
-import static io.trino.plugin.hudi.HudiUtil.isHudiTable;
+import static io.trino.plugin.hudi.util.HudiUtil.isHudiTable;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 

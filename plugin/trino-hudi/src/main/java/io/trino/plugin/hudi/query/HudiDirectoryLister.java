@@ -13,21 +13,24 @@
  */
 package io.trino.plugin.hudi.query;
 
-import io.trino.plugin.hive.metastore.Partition;
-import io.trino.plugin.hudi.HudiFileStatus;
+import io.trino.plugin.hive.HivePartitionKey;
+import io.trino.plugin.hudi.files.FileSlice;
 import io.trino.plugin.hudi.partition.HudiPartitionInfo;
 
 import java.io.Closeable;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 public interface HudiDirectoryLister
         extends Closeable
 {
-    List<HudiPartitionInfo> getPartitionsToScan();
+    List<FileSlice> listFileSlice(HudiPartitionInfo partitionInfo, String commitTime);
 
-    List<HudiFileStatus> listStatus(HudiPartitionInfo partitionInfo);
+    Optional<HudiPartitionInfo> getPartitionInfo(String partition);
 
-    Map<String, Optional<Partition>> getPartitions(List<String> partitionNames);
+    List<String> getAllPartitionValues();
+
+    String getRelativePartitionPath(String hivePartitionName);
+
+    List<HivePartitionKey> getHivePartitionKeys(String hivePartitionName);
 }

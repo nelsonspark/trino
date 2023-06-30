@@ -50,6 +50,12 @@ public class HudiSessionProperties
     private static final String STANDARD_SPLIT_WEIGHT_SIZE = "standard_split_weight_size";
     private static final String MINIMUM_ASSIGNED_SPLIT_WEIGHT = "minimum_assigned_split_weight";
 
+    private static final String MAX_SPLITS_PER_SECOND = "max_splits_per_second";
+
+    private static final String MAX_OUTSTANDING_SPLITS = "max_outstanding_splits";
+
+    private static final String SPLIT_GENERATOR_PARALLELISM = "split_generator_parallelism";
+
     private final List<PropertyMetadata<?>> sessionProperties;
 
     @Inject
@@ -116,6 +122,21 @@ public class HudiSessionProperties
                                 throw new TrinoException(INVALID_SESSION_PROPERTY, format("%s must be > 0 and <= 1.0: %s", MINIMUM_ASSIGNED_SPLIT_WEIGHT, value));
                             }
                         },
+                        false),
+                integerProperty(
+                        MAX_SPLITS_PER_SECOND,
+                        "Rate at which splits are enqueued for processing. The queue will throttle if this rate limit is breached.",
+                        hudiConfig.getMaxSplitsPerSecond(),
+                        false),
+                integerProperty(
+                        MAX_OUTSTANDING_SPLITS,
+                        "Maximum outstanding splits in a batch enqueued for processing.",
+                        hudiConfig.getMaxOutstandingSplits(),
+                        false),
+                integerProperty(
+                        SPLIT_GENERATOR_PARALLELISM,
+                        "Number of threads to generate splits from partitions",
+                        hudiConfig.getSplitGeneratorParallelism(),
                         false));
     }
 
@@ -174,5 +195,20 @@ public class HudiSessionProperties
     public static double getMinimumAssignedSplitWeight(ConnectorSession session)
     {
         return session.getProperty(MINIMUM_ASSIGNED_SPLIT_WEIGHT, Double.class);
+    }
+
+    public static int getMaxSplitsPerSecond(ConnectorSession session)
+    {
+        return session.getProperty(MAX_SPLITS_PER_SECOND, Integer.class);
+    }
+
+    public static int getMaxOutstandingSplits(ConnectorSession session)
+    {
+        return session.getProperty(MAX_OUTSTANDING_SPLITS, Integer.class);
+    }
+
+    public static int getSplitGeneratorParallelism(ConnectorSession session)
+    {
+        return session.getProperty(SPLIT_GENERATOR_PARALLELISM, Integer.class);
     }
 }

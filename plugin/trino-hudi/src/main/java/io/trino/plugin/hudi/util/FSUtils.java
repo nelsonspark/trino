@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.hudi.files;
+package io.trino.plugin.hudi.util;
 
 import io.trino.filesystem.Location;
 import io.trino.spi.TrinoException;

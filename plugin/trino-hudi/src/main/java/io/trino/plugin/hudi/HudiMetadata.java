@@ -59,7 +59,7 @@ import static io.trino.plugin.hive.util.HiveUtil.isHiveSystemSchema;
 import static io.trino.plugin.hudi.HudiSessionProperties.getColumnsToHide;
 import static io.trino.plugin.hudi.HudiTableProperties.LOCATION_PROPERTY;
 import static io.trino.plugin.hudi.HudiTableProperties.PARTITIONED_BY_PROPERTY;
-import static io.trino.plugin.hudi.HudiUtil.isHudiTable;
+import static io.trino.plugin.hudi.util.HudiUtil.isHudiTable;
 import static io.trino.plugin.hudi.model.HudiTableType.COPY_ON_WRITE;
 import static io.trino.spi.StandardErrorCode.UNSUPPORTED_TABLE_TYPE;
 import static io.trino.spi.connector.SchemaTableName.schemaTableName;

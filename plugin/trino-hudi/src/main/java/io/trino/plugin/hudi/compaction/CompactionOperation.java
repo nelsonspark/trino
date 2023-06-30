@@ -23,7 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
-import static io.trino.plugin.hudi.files.FSUtils.getCommitTime;
+import static io.trino.plugin.hudi.util.FSUtils.getCommitTime;
 import static java.util.Objects.requireNonNull;
 
 public class CompactionOperation

@@ -70,6 +70,8 @@ public interface HudiTimeline
     String INFLIGHT_SAVE_SCHEMA_ACTION_EXTENSION = "." + SCHEMA_COMMIT_ACTION + INFLIGHT_EXTENSION;
     String REQUESTED_SAVE_SCHEMA_ACTION_EXTENSION = "." + SCHEMA_COMMIT_ACTION + REQUESTED_EXTENSION;
 
+    String METADATA_BOOTSTRAP_INSTANT_TS = "00000000000001";
+
     HudiTimeline filterCompletedInstants();
 
     HudiTimeline getWriteTimeline();
@@ -102,6 +104,7 @@ public interface HudiTimeline
 
     BiPredicate<String, String> LESSER_THAN_OR_EQUALS = (commit1, commit2) -> commit1.compareTo(commit2) <= 0;
     BiPredicate<String, String> LESSER_THAN = (commit1, commit2) -> commit1.compareTo(commit2) < 0;
+    BiPredicate<String, String> GREATER_THAN_OR_EQUALS = (commit1, commit2) -> commit1.compareTo(commit2) >= 0;
 
     static boolean compareTimestamps(String commit1, BiPredicate<String, String> predicateToApply, String commit2)
     {

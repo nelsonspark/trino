@@ -29,13 +29,17 @@ import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.security.ConnectorIdentity;
+import io.trino.spi.type.TypeManager;
 import jakarta.annotation.PreDestroy;
 
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.BiFunction;
 
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static io.trino.plugin.hudi.HudiSessionProperties.getMaxOutstandingSplits;
+import static io.trino.plugin.hudi.HudiSessionProperties.getMaxSplitsPerSecond;
 import static io.trino.spi.connector.SchemaTableName.schemaTableName;
 import static java.util.Objects.requireNonNull;
 import static java.util.function.Function.identity;
@@ -47,8 +51,10 @@ public class HudiSplitManager
     private final BiFunction<ConnectorIdentity, HiveTransactionHandle, HiveMetastore> metastoreProvider;
     private final TrinoFileSystemFactory fileSystemFactory;
     private final ExecutorService executor;
-    private final int maxSplitsPerSecond;
-    private final int maxOutstandingSplits;
+    private final ScheduledExecutorService splitLoaderService;
+    private final ExecutorService splitGeneratorService;
+
+    private final TypeManager typeManager;
 
     @Inject
     public HudiSplitManager(
@@ -56,14 +62,17 @@ public class HudiSplitManager
             BiFunction<ConnectorIdentity, HiveTransactionHandle, HiveMetastore> metastoreProvider,
             @ForHudiSplitManager ExecutorService executor,
             TrinoFileSystemFactory fileSystemFactory,
-            HudiConfig hudiConfig)
+            @ForHudiSplitSource ScheduledExecutorService splitLoaderService,
+            @ForHudiBackgroundSplitLoader ExecutorService splitGeneratorService,
+            TypeManager typeManager)
     {
         this.transactionManager = requireNonNull(transactionManager, "transactionManager is null");
         this.metastoreProvider = requireNonNull(metastoreProvider, "metastoreProvider is null");
         this.executor = requireNonNull(executor, "executor is null");
         this.fileSystemFactory = requireNonNull(fileSystemFactory, "fileSystemFactory is null");
-        this.maxSplitsPerSecond = requireNonNull(hudiConfig, "hudiConfig is null").getMaxSplitsPerSecond();
-        this.maxOutstandingSplits = hudiConfig.getMaxOutstandingSplits();
+        this.splitLoaderService = requireNonNull(splitLoaderService, "splitLoaderService is null");
+        this.splitGeneratorService = requireNonNull(splitGeneratorService, "splitGeneratorService is null");
+        this.typeManager = requireNonNull(typeManager, "typeManager is null");
     }
 
     @PreDestroy
@@ -81,24 +90,22 @@ public class HudiSplitManager
             Constraint constraint)
     {
         HudiTableHandle hudiTableHandle = (HudiTableHandle) tableHandle;
-        HudiMetadata hudiMetadata = transactionManager.get(transaction, session.getIdentity());
-        Map<String, HiveColumnHandle> partitionColumnHandles = hudiMetadata.getColumnHandles(session, tableHandle)
-                .values().stream().map(HiveColumnHandle.class::cast)
-                .filter(HiveColumnHandle::isPartitionKey)
-                .collect(toImmutableMap(HiveColumnHandle::getName, identity()));
         HiveMetastore metastore = metastoreProvider.apply(session.getIdentity(), (HiveTransactionHandle) transaction);
         Table table = metastore.getTable(hudiTableHandle.getSchemaName(), hudiTableHandle.getTableName())
                 .orElseThrow(() -> new TableNotFoundException(schemaTableName(hudiTableHandle.getSchemaName(), hudiTableHandle.getTableName())));
+
         HudiSplitSource splitSource = new HudiSplitSource(
                 session,
                 metastore,
                 table,
                 hudiTableHandle,
                 fileSystemFactory,
-                partitionColumnHandles,
                 executor,
-                maxSplitsPerSecond,
-                maxOutstandingSplits);
+                splitLoaderService,
+                splitGeneratorService,
+                getMaxSplitsPerSecond(session),
+                getMaxOutstandingSplits(session),
+                typeManager);
         return new ClassLoaderSafeConnectorSplitSource(splitSource, HudiSplitManager.class.getClassLoader());
     }
 }
